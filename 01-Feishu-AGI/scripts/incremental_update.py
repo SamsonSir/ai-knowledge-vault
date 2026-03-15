@@ -206,7 +206,9 @@ def main():
     print(f'[INFO] 索引页共 {len(new_map)} 个日期')
 
     # === 监控检查：解析结果异常告警 ===
-    check_parse_health(len(new_map), today)
+    if not check_parse_health(len(new_map), today):
+        print(f'[ERROR] 解析结果异常，跳过更新以保护数据', file=sys.stderr)
+        sys.exit(1)
 
     # 2. 加载旧 index_map，diff 出新增
     old_map = json.load(open(INDEX_MAP)) if INDEX_MAP.exists() else {}
