@@ -76,6 +76,10 @@ def main():
         state['last_run'] = datetime.now().isoformat()
         save_state(state)
         print(f'[SUCCESS] {next_date} 处理完成')
+        # 自动推送到 GitHub
+        sync_script = BASE_DIR.parent / 'git-sync.sh'
+        if sync_script.exists():
+            os.system(f'bash {sync_script}')
     else:
         state.setdefault('failed', []).append(next_date)
         save_state(state)
