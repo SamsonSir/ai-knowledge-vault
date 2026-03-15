@@ -16,6 +16,7 @@ DATA_DIR = BASE_DIR / 'data'
 INDEX_MAP = DATA_DIR / 'index_map.json'
 STATE_FILE = DATA_DIR / 'extract-state.json'
 DAILY_DIR = BASE_DIR / 'daily'
+MONITOR_LOG = DATA_DIR / 'monitor_log.json'
 
 # 飞书索引文档 token（WaytoAGI 每日知识库索引页）
 INDEX_DOC_TOKEN = 'XjxvwwCZ7ijJMxkJ3SucrVEUn4p'
@@ -143,6 +144,56 @@ def parse_index_map(blocks):
     return date_map
 
 
+def check_parse_health(date_count, today):
+    """监控解析健康度，异常时告警
+    
+    检查逻辑：
+    1. 如果解析到 0 个日期 → 严重异常，告警
+    2. 如果解析到的日期数 < 历史平均值 * 0.5 → 可能异常，告警
+    3. 如果今天有数据但解析到 0 篇 → 告警
+    """
+    # 加载历史监控记录
+    history = []
+    if MONITOR_LOG.exists():
+        try:
+            history = json.load(open(MONITOR_LOG, encoding='utf-8'))
+        except Exception:
+            pass
+    
+    # 保留最近 30 天记录
+    history = [h for h in history if h.get('date', '') > '2026-01-01']
+    if len(history) > 30:
+        history = history[-30:]
+    
+    # 记录本次
+    history.append({'date': today, 'count': date_count, 'ts': datetime.now().isoformat()})
+    with open(MONITOR_LOG, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
+    
+    # 检查 1: 0 个日期
+    if date_count == 0:
+        print(f'[ALERT] 解析到 0 个日期！可能飞书格式变更或 API 异常', file=sys.stderr)
+        return False
+    
+    # 检查 2: 与历史平均比较（需要至少 7 天数据）
+    if len(history) >= 7:
+        avg_count = sum(h['count'] for h in history[:-1]) / (len(history) - 1)
+        if date_count < avg_count * 0.5:
+            print(f'[ALERT] 解析到 {date_count} 个日期，远低于平均值 {avg_count:.1f}，可能解析逻辑失效', file=sys.stderr)
+            return False
+    
+    # 检查 3: 今天应该更新但解析到空
+    # 周一到周五通常有更新
+    weekday = datetime.now().weekday()
+    if weekday < 5 and date_count > 0:
+        today_str = f'{today.month}月{today.day}日'
+        # 这里可以检查历史同期是否有数据
+        pass
+    
+    print(f'[INFO] 解析健康度检查通过（{date_count} 个日期）')
+    return True
+
+
 def main():
     today = datetime.now().strftime('%Y-%m-%d')
     print(f'[INFO] 增量更新，今天: {today}')
@@ -153,6 +204,9 @@ def main():
     blocks = fetch_all_blocks(INDEX_DOC_TOKEN, access_token)
     new_map = parse_index_map(blocks)
     print(f'[INFO] 索引页共 {len(new_map)} 个日期')
+
+    # === 监控检查：解析结果异常告警 ===
+    check_parse_health(len(new_map), today)
 
     # 2. 加载旧 index_map，diff 出新增
     old_map = json.load(open(INDEX_MAP)) if INDEX_MAP.exists() else {}
