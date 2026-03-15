@@ -69,7 +69,8 @@ def parse_index_map(blocks):
         if block.get('block_type') == 2:
             elements = block.get('text', {}).get('elements', [])
             text = ''.join(e.get('text_run', {}).get('content', '') for e in elements)
-            match = re.search(r'(\d+)月(\d+)日收录', text)
+            # 适配多种日期格式：X月Y日收录、X月Y日直播、X月Y日晚、X月Y日总结等
+            match = re.search(r'(\d+)月(\d+)日', text)
             if match:
                 month = match.group(1).zfill(2)
                 day = match.group(2).zfill(2)
