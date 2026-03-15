@@ -61,27 +61,85 @@ def fetch_all_blocks(doc_token, access_token):
     return blocks
 
 
+def get_block_text(block):
+    """从 block 中提取文本内容，支持 text 和 heading 类型"""
+    block_type = block.get('block_type')
+    if block_type == 2:
+        elements = block.get('text', {}).get('elements', [])
+        return ''.join(e.get('text_run', {}).get('content', '') for e in elements)
+    elif block_type == 3:
+        elements = block.get('heading1', {}).get('elements', [])
+        return ''.join(e.get('text_run', {}).get('content', '') for e in elements)
+    elif block_type == 4:
+        elements = block.get('heading2', {}).get('elements', [])
+        return ''.join(e.get('text_run', {}).get('content', '') for e in elements)
+    elif block_type == 5:
+        elements = block.get('heading3', {}).get('elements', [])
+        return ''.join(e.get('text_run', {}).get('content', '') for e in elements)
+    return ''
+
+
+def get_block_elements(block):
+    """获取 block 中的所有 elements，用于提取 mention_doc"""
+    block_type = block.get('block_type')
+    if block_type == 2:
+        return block.get('text', {}).get('elements', [])
+    elif block_type == 3:
+        return block.get('heading1', {}).get('elements', [])
+    elif block_type == 4:
+        return block.get('heading2', {}).get('elements', [])
+    elif block_type == 5:
+        return block.get('heading3', {}).get('elements', [])
+    return []
+
+
 def parse_index_map(blocks):
-    """从 blocks 解析日期->token 映射"""
+    """从 blocks 解析日期->token 映射
+    
+    结构说明：
+    - heading1 (type=3): 日期标题，如 "3月14日收录"
+    - text (type=2): 文章标题行，如 "📕 文章名称"（可能包含日期，但不是新日期）
+    - text (type=2): 空字符串，但包含 mention_doc 链接
+    """
     date_map = {}
     current_date = None
-    for block in blocks:
-        if block.get('block_type') == 2:
-            elements = block.get('text', {}).get('elements', [])
-            text = ''.join(e.get('text_run', {}).get('content', '') for e in elements)
-            # 适配多种日期格式：X月Y日收录、X月Y日直播、X月Y日晚、X月Y日总结等
+    
+    for i, block in enumerate(blocks):
+        block_type = block.get('block_type')
+        text = get_block_text(block)
+        
+        # 检测日期标题：**只有 heading1-3 才算日期标题**
+        # 普通 text 里的日期（如文章标题"4月8日东京见"）不算新日期
+        if block_type in [3, 4, 5] and text:  # heading1, heading2, heading3
             match = re.search(r'(\d+)月(\d+)日', text)
             if match:
                 month = match.group(1).zfill(2)
                 day = match.group(2).zfill(2)
                 current_date = f'2026-{month}-{day}'
                 date_map.setdefault(current_date, [])
+        
+        # 提取文档链接：当前 block 或下一个 block 可能有 mention_doc
         if current_date:
-            elements = block.get('text', {}).get('elements', [])
+            # 检查当前 block
+            elements = get_block_elements(block)
             for elem in elements:
-                token = elem.get('mention_doc', {}).get('obj_token')
+                token = elem.get('mention_doc', {}).get('token')  # 字段名是 token，不是 obj_token
                 if token and token not in date_map[current_date]:
                     date_map[current_date].append(token)
+            
+            # 检查下一个 block（如果是空 text block，可能包含链接）
+            if i + 1 < len(blocks):
+                next_block = blocks[i + 1]
+                next_type = next_block.get('block_type')
+                next_text = get_block_text(next_block)
+                # 下一个 block 是空的，或者是下一个文章的标题（但不是日期标题）
+                if not next_text or (next_type == 2 and not next_text.endswith('收录')):
+                    next_elements = get_block_elements(next_block)
+                    for elem in next_elements:
+                        token = elem.get('mention_doc', {}).get('token')  # 字段名是 token，不是 obj_token
+                        if token and token not in date_map[current_date]:
+                            date_map[current_date].append(token)
+    
     return date_map
 
 
