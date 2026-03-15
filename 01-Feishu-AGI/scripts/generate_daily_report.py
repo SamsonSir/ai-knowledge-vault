@@ -34,10 +34,32 @@ HELPER_SCRIPT = BASE_DIR / 'scripts' / 'download_wiki_images.js'
 FEISHU_APP_ID = os.getenv('FEISHU_APP_ID', 'cli_a90749c404a1dbd6')
 FEISHU_APP_SECRET = os.getenv('FEISHU_APP_SECRET', 'n9vXbGD1jYmy3U3jQb82afNIUKjJxYdf')
 
+
+def read_shell_export(name):
+    """从 ~/.bashrc ~/.zshrc 读取 export 变量，解决非登录 shell 取不到环境变量的问题"""
+    home = Path.home()
+    for rc in [home / '.bashrc', home / '.zshrc']:
+        if not rc.exists():
+            continue
+        try:
+            text = rc.read_text(encoding='utf-8', errors='ignore')
+        except Exception:
+            continue
+        m = re.search(rf'export\s+{re.escape(name)}=(?:"([^"]*)"|\'([^\']*)\'|([^\n#]+))', text)
+        if m:
+            return (m.group(1) or m.group(2) or m.group(3) or '').strip()
+    return ''
+
+
+def get_runtime_var(name, default=''):
+    return os.getenv(name) or read_shell_export(name) or default
+
+
 # Claude API 配置
-CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY', 'sk-Gr8tCh3atKEdlGJpUGpcPFSCnovO2rgMcWeF4p50zfOoZSIL')
-CLAUDE_API_KEY_BACKUP = 'sk-OMY2hTJgwKGLkQQlKDbgnhZVhT7KYyC8B886pIoc2gR0Mcvj'
-CLAUDE_BASE_URL = os.getenv('ANTHROPIC_BASE_URL', 'https://www.packyapi.com')
+CLAUDE_API_KEY = get_runtime_var('ANTHROPIC_API_KEY', 'sk-Gr8tCh3atKEdlGJpUGpcPFSCnovO2rgMcWeF4p50zfOoZSIL')
+CLAUDE_BASE_URL = get_runtime_var('ANTHROPIC_BASE_URL', 'https://www.packyapi.com')
+CLAUDE_FALLBACK_API_KEY = 'sk-OMY2hTJgwKGLkQQlKDbgnhZVhT7KYyC8B886pIoc2gR0Mcvj'
+CLAUDE_FALLBACK_BASE_URL = 'https://www.packyapi.com'
 
 # 超长文章阈值
 MAX_CHARS = 25000
@@ -311,10 +333,14 @@ def refine_content_with_claude(content, doc_token):
         'messages': [{'role': 'user', 'content': REFINE_PROMPT + sanitized}]
     }
 
-    for attempt in range(1, 4):
-        current_key = CLAUDE_API_KEY if attempt < 3 else CLAUDE_API_KEY_BACKUP
+    for attempt, (base_url, api_key) in enumerate([
+        (CLAUDE_BASE_URL, CLAUDE_API_KEY),
+        (CLAUDE_FALLBACK_BASE_URL, CLAUDE_FALLBACK_API_KEY),
+        (CLAUDE_FALLBACK_BASE_URL, CLAUDE_FALLBACK_API_KEY),
+    ], 1):
         try:
-            headers['x-api-key'] = current_key
+            api_url = f'{base_url}/v1/messages'
+            headers['x-api-key'] = api_key
             r = requests.post(api_url, headers=headers, json=payload, timeout=120)
             if r.status_code == 200 and r.text.strip():
                 data = r.json()

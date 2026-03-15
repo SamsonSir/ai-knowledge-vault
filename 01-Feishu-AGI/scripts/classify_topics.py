@@ -16,8 +16,30 @@ DAILY_DIR = BASE_DIR / 'daily'
 TOPICS_DIR = BASE_DIR / 'topics'
 CLS_FILE = DATA_DIR / 'classification.json'
 
-CLAUDE_API_KEY = os.getenv('ANTHROPIC_API_KEY', 'sk-Gr8tCh3atKEdlGJpUGpcPFSCnovO2rgMcWeF4p50zfOoZSIL')
-CLAUDE_BASE_URL = os.getenv('ANTHROPIC_BASE_URL', 'https://www.packyapi.com')
+
+def read_shell_export(name):
+    home = Path.home()
+    for rc in [home / '.bashrc', home / '.zshrc']:
+        if not rc.exists():
+            continue
+        try:
+            text = rc.read_text(encoding='utf-8', errors='ignore')
+        except Exception:
+            continue
+        m = re.search(rf'export\s+{re.escape(name)}=(?:"([^"]*)"|\'([^\']*)\'|([^\n#]+))', text)
+        if m:
+            return (m.group(1) or m.group(2) or m.group(3) or '').strip()
+    return ''
+
+
+def get_runtime_var(name, default=''):
+    return os.getenv(name) or read_shell_export(name) or default
+
+
+CLAUDE_API_KEY = get_runtime_var('ANTHROPIC_API_KEY', 'sk-Gr8tCh3atKEdlGJpUGpcPFSCnovO2rgMcWeF4p50zfOoZSIL')
+CLAUDE_BASE_URL = get_runtime_var('ANTHROPIC_BASE_URL', 'https://www.packyapi.com')
+CLAUDE_FALLBACK_API_KEY = 'sk-OMY2hTJgwKGLkQQlKDbgnhZVhT7KYyC8B886pIoc2gR0Mcvj'
+CLAUDE_FALLBACK_BASE_URL = 'https://www.packyapi.com'
 
 
 def sanitize_filename(name: str) -> str:
@@ -90,21 +112,32 @@ def classify_articles(articles, topics):
         f'文章：\n{article_list}'
     )
     api_url = f'{CLAUDE_BASE_URL}/v1/messages'
-    headers = {
-        'x-api-key': CLAUDE_API_KEY,
+    base_headers = {
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json'
     }
-    r = requests.post(api_url, headers=headers, json={
+    payload = {
         'model': 'claude-sonnet-4-6',
         'max_tokens': 1000,
         'messages': [{'role': 'user', 'content': prompt}]
-    }, timeout=60)
-    if r.status_code != 200:
-        raise RuntimeError(f'主题分类 API 失败: {r.status_code} {r.text[:200]}')
-    resp = r.json()
-    text = '\n'.join(block.get('text', '') for block in resp.get('content', []) if block.get('type') == 'text')
-    return extract_first_json_object(text)
+    }
+
+    last_error = None
+    for base_url, api_key in [
+        (CLAUDE_BASE_URL, CLAUDE_API_KEY),
+        (CLAUDE_FALLBACK_BASE_URL, CLAUDE_FALLBACK_API_KEY),
+    ]:
+        headers = dict(base_headers)
+        headers['x-api-key'] = api_key
+        api_url = f'{base_url}/v1/messages'
+        r = requests.post(api_url, headers=headers, json=payload, timeout=60)
+        if r.status_code == 200:
+            resp = r.json()
+            text = '\n'.join(block.get('text', '') for block in resp.get('content', []) if block.get('type') == 'text')
+            return extract_first_json_object(text)
+        last_error = f'{r.status_code} {r.text[:200]}'
+
+    raise RuntimeError(f'主题分类 API 失败: {last_error}')
 
 
 def remove_existing_topic_files_for_date(date: str):
