@@ -2,7 +2,7 @@
 """
 生成单个日期的合并日报 Markdown
 将该日期的所有日报合并到一个文件中
-使用 Claude Sonnet 提纯内容（纯文本，无图片）
+使用 Kimi-Coding 提纯内容（纯文本，无图片）
 """
 import json
 import sys
@@ -50,9 +50,9 @@ def get_runtime_var(name, default=''):
     return os.getenv(name) or read_shell_export(name) or default
 
 
-# Claude API 配置
-CLAUDE_API_KEY = get_runtime_var('ANTHROPIC_API_KEY', 'sk-Gr8tCh3atKEdlGJpUGpcPFSCnovO2rgMcWeF4p50zfOoZSIL')
-CLAUDE_BASE_URL = get_runtime_var('ANTHROPIC_BASE_URL', 'https://www.packyapi.com')
+# Kimi-Coding API 配置（替代 Claude）
+KIMI_API_KEY = get_runtime_var('KIMI_API_KEY', 'sk-kimi-Jwumln3tNXUh1LgbwJm9gPVrzRPhm3pPwr829tNhBNeF3TdVqzyQ1ScTiLxuLVEF')
+KIMI_BASE_URL = 'https://api.kimi.com/coding/'
 
 # 超长文章阈值
 MAX_CHARS = 25000
@@ -143,8 +143,8 @@ def restore_urls(content):
     return content.replace('__URL__', 'https://')
 
 
-def refine_content_with_claude(content, doc_token):
-    """使用 Claude Sonnet 按架构师级协议提纯内容"""
+def refine_content_with_kimi(content, doc_token):
+    """使用 Kimi-Coding 按架构师级协议提纯内容"""
 
     # 超长文章直接跳过
     if len(content) > MAX_CHARS:
@@ -152,16 +152,16 @@ def refine_content_with_claude(content, doc_token):
         return f'> ⚠️ **文章内容过长（约 {len(content)} 字符），已跳过自动提纯。**\n> 🔗 原文链接：https://waytoagi.feishu.cn/wiki/{doc_token}\n'
 
     prompt = REFINE_PROMPT.format(content=sanitize_urls(content))
-    headers = {'Authorization': f'Bearer {CLAUDE_API_KEY}', 'Content-Type': 'application/json'}
+    headers = {'Authorization': f'Bearer {KIMI_API_KEY}', 'Content-Type': 'application/json'}
     payload = {
-        'model': 'claude-sonnet-4-6',
+        'model': 'k2p5',
         'max_tokens': 4096,
         'messages': [{'role': 'user', 'content': prompt}]
     }
 
     for attempt in range(3):
         try:
-            r = requests.post(f'{CLAUDE_BASE_URL}/v1/messages', headers=headers, json=payload, timeout=120)
+            r = requests.post(f'{KIMI_BASE_URL}/v1/messages', headers=headers, json=payload, timeout=120)
             if r.status_code == 200:
                 result = r.json()
                 refined = result.get('content', [{}])[0].get('text', '')
@@ -209,7 +209,7 @@ def generate_daily_report(date, access_token, output_dir):
         merged += f'## {emoji} 文章 {i}\n\n> 文档 ID: `{token}`\n\n'
         if raw_content:
             print(f'[INFO] 正在提纯第 {i} 篇...', file=sys.stderr)
-            refined = refine_content_with_claude(raw_content, token)
+            refined = refine_content_with_kimi(raw_content, token)
             print(f'[SUCCESS] 第 {i} 篇导出并提纯成功', file=sys.stderr)
         else:
             refined = f'> ⚠️ **文档不可访问（已删除或无权限）**\n> 🔗 原文链接：https://waytoagi.feishu.cn/wiki/{token}\n'
