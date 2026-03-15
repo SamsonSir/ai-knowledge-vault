@@ -71,6 +71,15 @@ def main():
     ret = os.system(f'python3 {script} {next_date}')
     
     if ret == 0 and (DAILY_DIR / f'{next_date}.md').exists():
+        # 先做主题分类，再标记完成
+        classify_script = Path(__file__).parent / 'classify_topics.py'
+        cls_ret = os.system(f'python3 {classify_script} {next_date}')
+        if cls_ret != 0:
+            state.setdefault('failed', []).append(next_date)
+            save_state(state)
+            print(f'[ERROR] {next_date} 主题分类失败')
+            sys.exit(1)
+
         state.setdefault('completed', []).append(next_date)
         state['last_processed'] = next_date
         state['last_run'] = datetime.now().isoformat()

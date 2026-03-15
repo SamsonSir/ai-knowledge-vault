@@ -42,6 +42,20 @@ CLAUDE_BASE_URL = os.getenv('ANTHROPIC_BASE_URL', 'https://www.packyapi.com')
 # 超长文章阈值
 MAX_CHARS = 25000
 
+# 广告/引流语义关键词（强信号才过滤，避免误杀正文图）
+AD_CONTEXT_KEYWORDS = [
+    '扫码', '二维码', '关注公众号', '公众号', '关注我们', '加群', '进群', '社群',
+    '福利领取', '领取福利', '抽奖', '报名', '海报', '转发', '点赞', '私信', '商务合作',
+    '推广', '赞助', '课程咨询', '下载app', '联系客服', '添加微信', 'vx', '微信咨询'
+]
+
+# 正文图片常见语义（命中时优先保留）
+CONTENT_IMAGE_KEYWORDS = [
+    '如下图', '见下图', '上图', '下图', '截图', '界面', '效果图', '示意图',
+    '流程图', '架构图', '图表', '案例图', '演示图', '生成结果', '作品示例',
+    '对比图', '产品图', '海报生成', '封面图', '配图'
+]
+
 REFINE_PROMPT = """你是 JokerSu 的首席 AGI 架构师。你的任务是将原文「脱水」并重构成一份「看后即能操作」的战术手册。
 
 ⚠️ 重要约束（必须严格遵守）：
@@ -193,23 +207,36 @@ def extract_image_blocks(blocks):
     return images
 
 
-def should_keep_image(image):
-    """过滤明显广告/二维码/小图标，优先保留正文配图"""
+def should_keep_image(image, context_text=''):
+    """过滤明显广告/二维码/小图标，默认尽量保留正文图"""
     name = (image.get('name') or '').lower()
     width = int(image.get('width') or 0)
     height = int(image.get('height') or 0)
+    context = (context_text or '').lower()
 
-    # 明显二维码/引流/徽标类命名
-    bad_keywords = ['qr', 'qrcode', 'wechat', 'weixin', 'logo', 'avatar', 'icon']
-    if any(k in name for k in bad_keywords):
+    # 1) 文件名强信号：明确二维码/图标/logo 才过滤
+    hard_bad_name_keywords = ['qrcode', 'qr_code', 'qr-', 'logo', 'avatar', 'icon']
+    if any(k in name for k in hard_bad_name_keywords):
         return False
 
-    # 太小的一般不是正文图
-    if width and height and width <= 220 and height <= 220:
+    # 2) 太小的一般不是正文图
+    if width and height and width <= 180 and height <= 180:
         return False
-    if width and height and max(width, height) < 280:
+    if width and height and max(width, height) < 220:
         return False
 
+    # 3) 上下文出现明确正文配图语义，优先保留
+    if any(k in context for k in CONTENT_IMAGE_KEYWORDS):
+        return True
+
+    # 4) 上下文出现强广告/引流语义，再结合尺寸过滤
+    has_ad_context = any(k in context for k in AD_CONTEXT_KEYWORDS)
+    square_like = width and height and abs(width - height) <= min(width, height) * 0.18
+    very_tall = width and height and height / max(width, 1) >= 2.8
+    if has_ad_context and (square_like or very_tall or max(width, height) <= 480):
+        return False
+
+    # 5) 默认保留，宁可多保留一张，也别误杀正文图
     return True
 
 
@@ -224,12 +251,13 @@ def inject_image_placeholders(raw_content, images):
     kept_images = []
     image_idx = 0
 
-    for line in lines:
+    for idx, line in enumerate(lines):
         if filename_line.match(line.strip()):
             if image_idx < len(images):
                 img = images[image_idx]
                 image_idx += 1
-                if should_keep_image(img):
+                context_window = '\n'.join(lines[max(0, idx - 5): min(len(lines), idx + 6)])
+                if should_keep_image(img, context_window):
                     kept_images.append(img)
                     new_lines.append(f'[[IMAGE_{len(kept_images)}]]')
                 # 广告/二维码图：直接跳过，不写入正文

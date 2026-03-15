@@ -136,8 +136,8 @@ def main():
         print(f'[ERROR] {today} 处理失败', file=sys.stderr)
         sys.exit(1)
 
-    # 6. 对今天新增文章做主题分类，追加到对应 topics 文件
-    classify_new_articles(today)
+    # 6. 主题分类已由 batch_process.py 内部完成，这里不再重复执行
+    return
 
 
 def sanitize_filename(name):
