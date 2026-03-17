@@ -99,8 +99,10 @@ def parse_index_map(blocks):
     
     结构说明：
     - heading1 (type=3): 日期标题，如 "3月14日收录"
-    - text (type=2): 文章标题行，如 "📕 文章名称"（可能包含日期，但不是新日期）
+    - text (type=2): 文章标题行，如 "📕 文章名称"
     - text (type=2): 空字符串，但包含 mention_doc 链接
+    
+    改进：遇到日期后，持续收集该日期下所有 mention_doc，直到下一个日期标题
     """
     date_map = {}
     current_date = None
@@ -110,7 +112,6 @@ def parse_index_map(blocks):
         text = get_block_text(block)
         
         # 检测日期标题：**只有 heading1-3 才算日期标题**
-        # 普通 text 里的日期（如文章标题"4月8日东京见"）不算新日期
         if block_type in [3, 4, 5] and text:  # heading1, heading2, heading3
             match = re.search(r'(\d+)月(\d+)日', text)
             if match:
@@ -119,27 +120,13 @@ def parse_index_map(blocks):
                 current_date = f'2026-{month}-{day}'
                 date_map.setdefault(current_date, [])
         
-        # 提取文档链接：当前 block 或下一个 block 可能有 mention_doc
+        # 提取文档链接：只要 current_date 不为空，就收集 mention_doc
         if current_date:
-            # 检查当前 block
             elements = get_block_elements(block)
             for elem in elements:
-                token = elem.get('mention_doc', {}).get('token')  # 字段名是 token，不是 obj_token
+                token = elem.get('mention_doc', {}).get('token')
                 if token and token not in date_map[current_date]:
                     date_map[current_date].append(token)
-            
-            # 检查下一个 block（如果是空 text block，可能包含链接）
-            if i + 1 < len(blocks):
-                next_block = blocks[i + 1]
-                next_type = next_block.get('block_type')
-                next_text = get_block_text(next_block)
-                # 下一个 block 是空的，或者是下一个文章的标题（但不是日期标题）
-                if not next_text or (next_type == 2 and not next_text.endswith('收录')):
-                    next_elements = get_block_elements(next_block)
-                    for elem in next_elements:
-                        token = elem.get('mention_doc', {}).get('token')  # 字段名是 token，不是 obj_token
-                        if token and token not in date_map[current_date]:
-                            date_map[current_date].append(token)
     
     return date_map
 
@@ -186,12 +173,30 @@ def check_parse_health(date_count, today):
     # 周一到周五通常有更新
     weekday = datetime.now().weekday()
     if weekday < 5 and date_count > 0:
-        today_str = f'{today.month}月{today.day}日'
+        if isinstance(today, str):
+            from datetime import datetime as _dt
+            _today = _dt.strptime(today, '%Y-%m-%d')
+        else:
+            _today = today
+        today_str = f'{_today.month}月{_today.day}日'
         # 这里可以检查历史同期是否有数据
         pass
     
     print(f'[INFO] 解析健康度检查通过（{date_count} 个日期）')
     return True
+
+
+def notify(msg):
+    """通过 openclaw 发飞书消息给老大"""
+    import subprocess
+    result = subprocess.run([
+        'openclaw', 'message', 'send',
+        '--channel', 'feishu',
+        '-t', 'user:ou_68f0a760761d15f8e1352eb8a7e0bd0d',
+        '-m', msg
+    ], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f'[WARN] 通知发送失败: {result.stderr}', file=sys.stderr)
 
 
 def main():
@@ -218,15 +223,18 @@ def main():
 
     if not new_tokens_today:
         print(f'[INFO] 今天 {today} 暂无新文章，退出')
+        notify(f'📊 AGI知识库增量更新\\n日期：{today}\\n状态：暂无新文章')
         return
 
     print(f'[INFO] 今天共 {len(new_tokens_today)} 篇，新增 {len(added)} 篇')
 
     # 3. 更新 index_map.json（合并新数据）
-    old_map[today] = list(new_tokens_today)
+    # === 过滤：只保留 <= 今天的日期，避免未来占位数据 ===
+    filtered_map = {k: v for k, v in old_map.items() if k <= today}
+    filtered_map[today] = list(new_tokens_today)
     with open(INDEX_MAP, 'w', encoding='utf-8') as f:
-        json.dump(old_map, f, ensure_ascii=False, indent=2)
-    print('[INFO] index_map.json 已更新')
+        json.dump(filtered_map, f, ensure_ascii=False, indent=2)
+    print(f'[INFO] index_map.json 已更新（过滤后共 {len(filtered_map)} 个日期）')
 
     # 4. 如果今天已有 daily 文件且有新增，删掉重新生成；否则直接生成
     daily_file = DAILY_DIR / f'{today}.md'
@@ -247,8 +255,10 @@ def main():
     ret = os.system(f'python3 {script}')
     if ret == 0:
         print(f'[SUCCESS] {today} 增量处理完成')
+        notify(f'✅ AGI知识库增量更新\n日期：{today}\n状态：处理完成\n文章数：{len(new_tokens_today)}篇')
     else:
         print(f'[ERROR] {today} 处理失败', file=sys.stderr)
+        notify(f'❌ AGI知识库增量更新\n日期：{today}\n状态：处理失败\n请检查日志')
         sys.exit(1)
 
     # 6. 主题分类已由 batch_process.py 内部完成，这里不再重复执行

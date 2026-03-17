@@ -23,17 +23,15 @@ def save_state(state):
     json.dump(state, open(STATE_FILE, 'w'), indent=2, ensure_ascii=False)
 
 def get_next_date(state):
-    """获取下一个待处理的日期（不超过今天）"""
+    """获取下一个待处理的日期（只处理 <= 今天的日期）"""
     data = json.load(open(INDEX_MAP))
-    all_dates = sorted(data.keys())
-    
     today = datetime.now().strftime('%Y-%m-%d')
+    
+    # 过滤：只保留 <= 今天的日期
+    all_dates = sorted([d for d in data.keys() if d <= today])
     completed = set(state.get('completed', []))
     
     for date in all_dates:
-        # 不处理未来日期（增量模式：只跑到今天）
-        if date > today:
-            return None
         # 跳过已完成的
         if date in completed:
             continue
@@ -48,12 +46,14 @@ def get_next_date(state):
 def notify(msg):
     """通过 openclaw 发飞书消息给老大"""
     import subprocess
-    subprocess.run([
+    result = subprocess.run([
         'openclaw', 'message', 'send',
         '--channel', 'feishu',
-        '--to', 'user:ou_68f0a760761d15f8e1352eb8a7e0bd0d',
-        '--message', msg
-    ], capture_output=True)
+        '-t', 'user:ou_68f0a760761d15f8e1352eb8a7e0bd0d',
+        '-m', msg
+    ], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f'[WARN] 通知发送失败: {result.stderr}', file=sys.stderr)
 
 def main():
     state = load_state()
@@ -62,6 +62,8 @@ def main():
     
     if next_date is None:
         print('[INFO] 所有日期已处理完毕！')
+        # 汇报：没有新数据
+        notify('📊 AGI知识库增量采集\n状态：今日无新文章\n时间：' + datetime.now().strftime('%Y-%m-%d %H:%M'))
         return
     
     print(f'[INFO] 正在处理日期: {next_date}')
@@ -85,6 +87,8 @@ def main():
         state['last_run'] = datetime.now().isoformat()
         save_state(state)
         print(f'[SUCCESS] {next_date} 处理完成')
+        # 汇报：处理成功
+        notify(f'✅ AGI知识库增量采集\\n日期：{next_date}\\n状态：处理完成\\n文章数：{len(json.load(open(INDEX_MAP)).get(next_date, []))}篇')
         # 自动推送到 GitHub
         sync_script = BASE_DIR.parent / 'git-sync.sh'
         if sync_script.exists():
@@ -93,6 +97,8 @@ def main():
         state.setdefault('failed', []).append(next_date)
         save_state(state)
         print(f'[ERROR] {next_date} 处理失败')
+        # 汇报：处理失败
+        notify(f'❌ AGI知识库增量采集\\n日期：{next_date}\\n状态：处理失败\\n请检查日志')
         sys.exit(1)
 
 if __name__ == '__main__':
