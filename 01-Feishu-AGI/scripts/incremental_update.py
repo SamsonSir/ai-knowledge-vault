@@ -221,20 +221,25 @@ def main():
     new_tokens_today = set(new_map.get(today, []))
     added = new_tokens_today - old_tokens_today
 
-    if not new_tokens_today:
-        print(f'[INFO] 今天 {today} 暂无新文章，退出')
-        notify(f'📊 AGI知识库增量更新\\n日期：{today}\\n状态：暂无新文章')
-        return
-
     print(f'[INFO] 今天共 {len(new_tokens_today)} 篇，新增 {len(added)} 篇')
 
-    # 3. 更新 index_map.json（合并新数据）
-    # === 过滤：只保留 <= 今天的日期，避免未来占位数据 ===
-    filtered_map = {k: v for k, v in old_map.items() if k <= today}
-    filtered_map[today] = list(new_tokens_today)
+    # 3. 更新 index_map.json（全量合并：飞书返回的所有日期数据 + 本地历史数据）
+    # 关键：飞书索引页包含326个日期，必须全量合并才能补全历史数据
+    merged_map = dict(old_map)  # 复制所有本地历史数据
+    # 更新飞书返回的所有日期（不只是今天），补全缺失的历史日期
+    for date, tokens in new_map.items():
+        if date <= today:  # 只保留今天及之前的
+            merged_map[date] = tokens
+    filtered_map = {k: v for k, v in merged_map.items() if k <= today}
     with open(INDEX_MAP, 'w', encoding='utf-8') as f:
         json.dump(filtered_map, f, ensure_ascii=False, indent=2)
-    print(f'[INFO] index_map.json 已更新（过滤后共 {len(filtered_map)} 个日期）')
+    print(f'[INFO] index_map.json 已更新（共 {len(filtered_map)} 个日期，飞书返回 {len(new_map)} 个）')
+
+    # 检查今天是否有新文章需要处理
+    if not new_tokens_today:
+        print(f'[INFO] 今天 {today} 暂无新文章，跳过处理')
+        notify(f'📊 AGI知识库增量更新\n日期：{today}\n状态：暂无新文章\n索引已更新（{len(filtered_map)} 个日期）')
+        return
 
     # 4. 如果今天已有 daily 文件且有新增，删掉重新生成；否则直接生成
     daily_file = DAILY_DIR / f'{today}.md'

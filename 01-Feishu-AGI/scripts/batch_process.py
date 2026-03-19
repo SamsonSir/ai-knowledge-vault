@@ -23,12 +23,13 @@ def save_state(state):
     json.dump(state, open(STATE_FILE, 'w'), indent=2, ensure_ascii=False)
 
 def get_next_date(state):
-    """获取下一个待处理的日期（只处理 <= 今天的日期）"""
+    """获取下一个待处理的日期（只处理 <= 昨天的日期，确保数据完整）"""
     data = json.load(open(INDEX_MAP))
-    today = datetime.now().strftime('%Y-%m-%d')
+    from datetime import timedelta
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
     
-    # 过滤：只保留 <= 今天的日期
-    all_dates = sorted([d for d in data.keys() if d <= today])
+    # 过滤：只保留 <= 昨天的日期（当天数据可能不完整，延迟一天采集）
+    all_dates = sorted([d for d in data.keys() if d <= yesterday])
     completed = set(state.get('completed', []))
     
     for date in all_dates:
