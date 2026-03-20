@@ -238,7 +238,10 @@ def main():
     # 检查今天是否有新文章需要处理
     if not new_tokens_today:
         print(f'[INFO] 今天 {today} 暂无新文章，跳过处理')
-        notify(f'📊 AGI知识库增量更新\n日期：{today}\n状态：暂无新文章\n索引已更新（{len(filtered_map)} 个日期）')
+        notify(f'📊 AGI知识库增量更新\n日期：{today}（索引更新）\n状态：今天暂无新文章\n注意：实际采集 ≤ 昨天数据，由 batch_process 处理\n索引已更新（{len(filtered_map)} 个日期）')
+        # 即使今天没有新文章，也要调用 batch_process 处理昨天的数据
+        script = Path(__file__).parent / 'batch_process.py'
+        ret = os.system(f'python3 {script}')
         return
 
     # 4. 如果今天已有 daily 文件且有新增，删掉重新生成；否则直接生成
