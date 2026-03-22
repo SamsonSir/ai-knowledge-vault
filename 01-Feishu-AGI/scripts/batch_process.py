@@ -23,12 +23,12 @@ def save_state(state):
     json.dump(state, open(STATE_FILE, 'w'), indent=2, ensure_ascii=False)
 
 def get_next_date(state):
-    """获取下一个待处理的日期（只处理 <= 昨天的日期，确保数据完整）"""
+    """获取下一个待处理的日期（只处理 <= 2天前的日期，确保数据完整）"""
     data = json.load(open(INDEX_MAP))
     from datetime import timedelta
     yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
     
-    # 过滤：只保留 <= 昨天的日期（当天数据可能不完整，延迟一天采集）
+    # 过滤：只保留 <= 昨天的日期（18:00跑时昨天的文章已更新完毕）
     all_dates = sorted([d for d in data.keys() if d <= yesterday])
     completed = set(state.get('completed', []))
     
@@ -36,10 +36,17 @@ def get_next_date(state):
         # 跳过已完成的
         if date in completed:
             continue
-        # 跳过已有文件的
-        if (DAILY_DIR / f'{date}.md').exists():
-            completed.add(date)
-            continue
+        # 跳过已有完整文件的（检查文件内容是否包含"共 0 篇"——空文件不算完成）
+        md_file = DAILY_DIR / f'{date}.md'
+        if md_file.exists():
+            content = md_file.read_text(encoding='utf-8')
+            tokens_count = len(data.get(date, []))
+            if tokens_count > 0 and f'共 {tokens_count} 篇文章' in content:
+                completed.add(date)
+                continue
+            # 空文件或内容不完整 → 删除重来
+            print(f'[INFO] 文件 {date}.md 内容不完整/为空，将重新处理')
+            md_file.unlink()
         return date
     
     return None  # 全部处理完毕
@@ -73,7 +80,16 @@ def main():
     script = Path(__file__).parent / 'generate_daily_report.py'
     ret = os.system(f'python3 {script} {next_date}')
     
-    if ret == 0 and (DAILY_DIR / f'{next_date}.md').exists():
+    # 处理日期无文章的情况
+    md_file = DAILY_DIR / f'{next_date}.md'
+    if ret == 0 and not md_file.exists():
+        # generate 返回 None（无文章），跳过但不标记失败
+        print(f'[INFO] {next_date} 无文章，跳过')
+        state['last_run'] = datetime.now().isoformat()
+        save_state(state)
+        return
+
+    if ret == 0 and md_file.exists():
         # 先做主题分类，再标记完成
         classify_script = Path(__file__).parent / 'classify_topics.py'
         cls_ret = os.system(f'python3 {classify_script} {next_date}')
@@ -84,6 +100,9 @@ def main():
             sys.exit(1)
 
         state.setdefault('completed', []).append(next_date)
+        # 从 failed 列表移除（如果之前标记过失败但这次成功了）
+        if next_date in state.get('failed', []):
+            state['failed'].remove(next_date)
         state['last_processed'] = next_date
         state['last_run'] = datetime.now().isoformat()
         save_state(state)

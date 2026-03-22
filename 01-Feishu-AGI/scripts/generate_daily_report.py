@@ -194,6 +194,9 @@ def generate_daily_report(date, access_token, output_dir):
         sys.exit(1)
 
     tokens = index_map[date]
+    if not tokens:
+        print(f'[INFO] {date} 无文章（index_map 为空），跳过', file=sys.stderr)
+        return None  # 返回 None 表示无需处理
     print(f'[INFO] {date} 共有 {len(tokens)} 篇日报', file=sys.stderr)
 
     output_dir.mkdir(parents=True, exist_ok=True)
